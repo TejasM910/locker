@@ -1,0 +1,26 @@
+.env
+.env.*
+!.env.example
+frontend/.env.local
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.venv/
+**/venv/
+.coverage
+htmlcov/
+
+# Node.js / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+frontend/AGENTS.md
+
+# Local tooling
+.vscode/*
+!.vscode/extensions.json

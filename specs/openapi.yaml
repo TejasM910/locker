@@ -1,0 +1,34 @@
+openapi: 3.1.0
+info: { title: Locker API, version: 0.1.0 }
+paths:
+  /health:
+    get: { operationId: health, responses: { "200": { description: ok } } }
+  /v1/bookings:
+    post:
+      operationId: create_booking
+      description: REQ-BOOK-001/002/003. Requires OTP bearer auth; X-User-Id is retained as a development fallback.
+      responses: { "201": { description: created }, "409": { description: NO_LOCKER_AVAILABLE } }
+  /v1/bookings/{public_id}:
+    get:
+      operationId: get_booking
+      responses: { "200": { description: ok }, "404": { description: not found } }
+  /v1/bookings/{public_id}/unlock:
+    post:
+      operationId: unlock_booking
+      description: REQ-LOCK-001/002
+      responses: { "202": { description: command sent }, "403": { description: not allowed }, "429": { description: rate limited } }
+  /v1/webhooks/razorpay:
+    post:
+      operationId: razorpay_webhook
+      description: REQ-PAY-001/002/003
+      responses: { "200": { description: ok }, "400": { description: bad signature } }
+  /v1/auth/otp/request:
+    post:
+      operationId: otp_request
+      description: REQ-SEC-004. Request an OTP for a phone number; dev mode echoes the generated code.
+      responses: { "200": { description: otp sent }, "429": { description: rate limited } }
+  /v1/auth/otp/verify:
+    post:
+      operationId: otp_verify
+      description: REQ-SEC-004. Verify the OTP and return a bearer token.
+      responses: { "200": { description: token issued }, "400": { description: invalid otp } }

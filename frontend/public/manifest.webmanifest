@@ -1,0 +1,12 @@
+{
+  "name": "Locker Secure Storage",
+  "short_name": "Locker",
+  "description": "Book and unlock secure storage from your phone.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f6f0",
+  "theme_color": "#142f2b",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

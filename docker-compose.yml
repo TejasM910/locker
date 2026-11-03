@@ -1,0 +1,40 @@
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: locker
+      MYSQL_USER: ${MYSQL_USER:-locker}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+    ports: ["3306:3306"]
+    healthcheck: { test: ["CMD", "mysqladmin", "ping", "-h", "localhost"], interval: 5s, retries: 20 }
+    volumes: [dbdata:/var/lib/mysql]
+  mqtt:
+    image: eclipse-mosquitto:2
+    command: mosquitto -c /mosquitto-no-auth.conf
+    ports: ["1883:1883"]
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:?Set DOCKER_DATABASE_URL in .env}
+      SYNC_DATABASE_URL: ${DOCKER_SYNC_DATABASE_URL:?Set DOCKER_SYNC_DATABASE_URL in .env}
+      MQTT_HOST: mqtt
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["8000:8000"]
+    volumes: ["./backend:/app", "./specs:/specs:ro"]
+  frontend:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+    depends_on:
+      - api
+    ports: ["3000:3000"]
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+volumes:
+  dbdata:
