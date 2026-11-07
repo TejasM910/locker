@@ -3,19 +3,132 @@ info: { title: Locker API, version: 0.1.0 }
 paths:
   /health:
     get: { operationId: health, responses: { "200": { description: ok } } }
+  /v1/locations/nearby:
+    post:
+      operationId: list_nearby_locations
+      description: REQ-LOC-001..007. Public map-discovery endpoint; coordinates are sent in the request body so they are not exposed in URL access logs. Do not persist or log them. The nearby-map client searches within 1 km after meaningful movement (50 m and 15 s minimum interval); maximum 6000 requests per minute per source IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [latitude, longitude]
+              properties:
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                radius_m: { type: integer, minimum: 500, maximum: 1000, default: 1000 }
+      responses:
+        "200":
+          description: Nearby registered locations, nearest first, including locations with zero free lockers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, generated_at]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [location_id, name, address, latitude, longitude, distance_m, available_by_size]
+                      properties:
+                        location_id: { type: integer }
+                        name: { type: string }
+                        address: { type: string }
+                        latitude: { type: number }
+                        longitude: { type: number }
+                        distance_m: { type: integer, minimum: 0 }
+                        available_by_size:
+                          type: object
+                          description: Counts include only lockers currently marked free.
+                          properties:
+                            M: { type: integer, minimum: 0 }
+                            L: { type: integer, minimum: 0 }
+                  generated_at: { type: string, format: date-time }
+        "422": { description: Invalid coordinates or radius }
+        "429": { description: Per-IP discovery rate limit exceeded }
+        "503": { description: Search bounding box contains too many candidate locations }
+  /v1/locations/{location_id}/lockers:
+    get:
+      operationId: list_location_lockers
+      description: REQ-PWA-004. Requires OTP bearer auth; return individual lockers for a location, including stable public locker codes, size, and current availability.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: location_id
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Locker inventory for the selected location.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [location_id, location_name, address, items]
+                properties:
+                  location_id: { type: integer }
+                  location_name: { type: string }
+                  address: { type: string }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [locker_code, size, status]
+                      properties:
+                        locker_code: { type: string, example: CH101 }
+                        size: { type: string, enum: [M, L] }
+                        status: { type: string, enum: [free, held, offline] }
+        "404": { description: Location not found }
   /v1/bookings:
     post:
       operationId: create_booking
-      description: REQ-BOOK-001/002/003. Requires OTP bearer auth; X-User-Id is retained as a development fallback.
-      responses: { "201": { description: created }, "409": { description: NO_LOCKER_AVAILABLE } }
+      description: REQ-BOOK-001/002/003/007. Requires OTP bearer auth; reserve the exact available locker_code in one transaction. X-User-Id is retained as a development fallback.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locker_code, duration_hours]
+              properties:
+                locker_code: { type: string, minLength: 3, maxLength: 16 }
+                duration_hours: { type: integer, minimum: 1, maximum: 72 }
+      responses:
+        "201":
+          description: Exact locker reserved; response includes public locker code and size.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [public_id, state, locker_code, size, amount_paise, duration_hours, razorpay_order_id, expires_at]
+                properties:
+                  public_id: { type: string }
+                  state: { type: string }
+                  locker_code: { type: string, example: CH101 }
+                  size: { type: string, enum: [M, L] }
+                  amount_paise: { type: integer }
+                  duration_hours: { type: integer }
+                  razorpay_order_id: { type: [string, "null"] }
+                  expires_at: { type: string, format: date-time }
+        "409": { description: NO_LOCKER_AVAILABLE; exact locker cannot be reserved }
   /v1/bookings/{public_id}:
     get:
       operationId: get_booking
+      security:
+        - BearerAuth: []
       responses: { "200": { description: ok }, "404": { description: not found } }
   /v1/bookings/{public_id}/unlock:
     post:
       operationId: unlock_booking
       description: REQ-LOCK-001/002
+      security:
+        - BearerAuth: []
       responses: { "202": { description: command sent }, "403": { description: not allowed }, "429": { description: rate limited } }
   /v1/webhooks/razorpay:
     post:
@@ -32,3 +145,8 @@ paths:
       operationId: otp_verify
       description: REQ-SEC-004. Verify the OTP and return a bearer token.
       responses: { "200": { description: token issued }, "400": { description: invalid otp } }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer

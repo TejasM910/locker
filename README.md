@@ -6,11 +6,11 @@ A spec-driven locker booking prototype. Travelers use a mobile-friendly web app 
 
 ## Project flow
 
-1. **Sign in:** The PWA requests and verifies an OTP. In development, the API returns the OTP as `debug_code`; there is no SMS delivery.
-2. **Choose a location:** The traveler scans a location QR code or enters a location ID. The QR code identifies an existing location; location discovery and inventory administration are not yet implemented.
-3. **Reserve a locker:** The API checks for a free locker matching the requested size, marks it held, creates a `CREATED` booking, and creates a Razorpay order. An unpaid hold expires after 15 minutes.
-4. **Pay:** The PWA opens Razorpay Checkout. A valid `payment.captured` webhook moves the booking to `PAID`. The backend verifies the webhook signature and handles duplicate event delivery.
-5. **Use the locker:** The traveler can request unlock through the API. When MQTT is enabled, the API publishes a command to `lockers/{device_id}/cmd`; otherwise it logs the would-be command. A device or simulator reports events on `lockers/{device_id}/evt`.
+1. **Sign in:** An unauthenticated visitor sees the phone/OTP sign-in screen before any map or locker controls. In development, the API returns the OTP as `debug_code`; there is no SMS delivery. A valid restored session opens the map directly.
+2. **Find and navigate:** The traveler browses nearby locker markers and explicitly starts the previously disclosed OSRM driving route to a selected location. Foreground GPS updates show route progress; arrival is detected within 50 m, with a manual “I’m here” fallback.
+3. **Choose a locker:** After arrival confirmation, the PWA fetches individual free lockers for the location, showing stable public codes (for example `CH101`) and sizes. The traveler selects a specific code and duration; the API reserves exactly that locker or rejects a stale choice. An unpaid hold expires after 15 minutes.
+4. **Pay:** The PWA shows a dedicated booking/payment step and opens Razorpay only after the traveler presses the checkout button. A valid `payment.captured` webhook moves the booking to `PAID`. The backend verifies the webhook signature and handles duplicate event delivery.
+5. **Unlock:** After payment is verified, the traveler explicitly presses **Unlock locker**. When MQTT is enabled, the API publishes a command to `lockers/{device_id}/cmd`; otherwise it logs the would-be command. A device or simulator reports events on `lockers/{device_id}/evt`.
 6. **Track and release:** A `door_closed` event moves a paid booking to `STORED`. A `pickup_completed` event moves it to `RELEASED` and frees the locker. Booking changes and device events are persisted for audit.
 
 ### Booking states
@@ -23,8 +23,8 @@ An unpaid `CREATED` booking can expire and free its locker. `OVERSTAY`, refunds,
 
 | Component | Role |
 |---|---|
-| `frontend/` | Next.js PWA for OTP sign-in, QR/manual location selection, booking, checkout, status, and unlock requests |
-| `backend/` | FastAPI API, booking/payment logic, database access, expiry worker, and MQTT listener/publisher |
+| `frontend/` | Next.js PWA with an OTP-first entry screen, authenticated MapLibre map, foreground geolocation, arrival confirmation, coded-locker selection, checkout, status, and unlock requests |
+| `backend/` | FastAPI API including nearby search, per-location coded locker inventory, exact-locker reservation, payment logic, expiry worker, and MQTT listener/publisher |
 | MySQL 8 | Users, locations, lockers, bookings, payments, and locker-event audit data |
 | Mosquitto | Local MQTT broker for locker commands and device events |
 | Razorpay | Checkout/order creation and signed payment webhooks |
@@ -82,7 +82,7 @@ If PowerShell blocks activation scripts, the commands above use the virtual envi
 
 ### 3. Create the database schema and demo inventory
 
-Create a MySQL database matching the database name in `.env`, then run the checked-in Alembic migration from the backend folder:
+Create a MySQL database matching the database name in `.env`, then run the checked-in Alembic migrations from the backend folder:
 
 ```powershell
 Set-Location backend
@@ -90,25 +90,43 @@ Set-Location backend
 Set-Location ..
 ```
 
-To create a demo location and two lockers, connect to the database in MySQL Workbench and run:
+The migrations add a `(lat, lng)` index used by nearby searches and assign each existing locker a stable location-derived public code (for example `CH101`), separate from its MQTT device ID. If your local database was created manually or does not have Alembic revision history, back it up and reconcile the existing schema with the checked-in migrations before running `upgrade head`; do not run the initial schema migration against tables that already exist.
 
-```sql
-INSERT INTO locations (name, address, lat, lng)
-VALUES ('Demo Location', 'Local test site', 0, 0);
+For the original manually-created local schema only, after backing up and verifying that all tables match `20261104_0001_initial_schema.py`, mark that existing schema as the baseline, then apply subsequent migrations:
 
-SET @location_id = LAST_INSERT_ID();
-
-INSERT INTO lockers (location_id, size, device_id, status)
-VALUES
-  (@location_id, 'M', 'demo-locker-001', 'free'),
-  (@location_id, 'L', 'demo-locker-002', 'free');
-
-SELECT @location_id AS demo_location_id;
+```powershell
+Set-Location backend
+python -m alembic stamp 20261104_0001
+python -m alembic upgrade head
+python -m alembic current
+Set-Location ..
 ```
 
-Save the returned location ID for the app. Existing databases that were created manually should be backed up and compared with the migration before applying it; do not run the initial migration against tables that already exist.
+Do not stamp a database with missing or different tables/columns; reconcile it first. If the database is new, use `upgrade head` without stamping.
 
-### 4. Start the local services
+To create three clearly labeled Bengaluru demo locations, each with two medium lockers and one large locker, run this from the repository root:
+
+```powershell
+Set-Location backend
+python .\seed_demo_inventory.py
+Set-Location ..
+```
+
+The seeder is restricted to a local MySQL server, is safe to rerun, prints each location ID and its free inventory, and does not reset or modify existing locker statuses. The locations are fictional test points near central Bengaluru (about 0-400 m apart); the map opens there when device location is unavailable. Use this only in a local development database.
+
+### 4. Test the map-to-reservation flow
+
+1. Start the local services and open [http://localhost:3000](http://localhost:3000). If using a phone, use your HTTPS ngrok frontend URL; browser geolocation does not work on a non-local HTTP URL.
+2. Grant location permission if the browser asks. If your device is not near Bengaluru or you deny permission, the map opens at the Bengaluru demo area. Pan/zoom if needed and press **Search this area**.
+3. Select a **DEMO ONLY** marker and review its free medium/large count. To try prototype driving guidance, press **Start driving directions** after reading the coordinate-sharing disclosure; the route and next-turn steps appear in the map details. Then press **Choose this location** to continue. Directions require foreground device location and use the public OSRM demo service; booking remains available if routing fails.
+4. Sign in with a development test phone number; the local API returns the OTP on screen. Select a size with free inventory and press **Find & reserve a locker**. The app should show a `CREATED` booking and hold one demo locker.
+5. To continue through payment, configure Razorpay test credentials and complete checkout in Test Mode. A reservation alone does not require payment; its hold expires after the configured 15 minutes.
+
+These are simulated locations and do not represent physical lockers. Do not expect real hardware unlock behavior from the demo records.
+
+Selecting a nearby marker can also request in-app **driving** directions from the current position through the public OSRM demo service. The route panel discloses that precise start and destination coordinates are sent to that third-party service. The public demo is best-effort, driving-only, and not a production or pedestrian navigation provider. Booking remains available if routing fails or the user does not start guidance.
+
+### 5. Start the local services
 
 Start MySQL first. Configure the root `.env` and `frontend/.env.local`, then run this once from the project root:
 
@@ -152,7 +170,12 @@ The backend tests include API-contract, requirement-traceability, booking-state,
 - OTP is returned in the API response for development; SMS delivery is not implemented.
 - OTPs, bearer tokens, and rate-limit counters are in memory and are cleared when the API restarts.
 - `X-User-Id` is accepted as a development authentication fallback; production authentication hardening is required.
-- Locations and locker inventory must be inserted into MySQL manually; there is no operator setup screen or location directory.
+- Nearby map availability uses current MySQL locker status, not a verified device-heartbeat freshness signal. Counts are snapshots and can change before booking; the booking endpoint remains authoritative.
+- The nearby map requests browser location permission when opened, follows the traveler only while the map is visible, and searches within 1 km. If permission is denied, manual map search remains available. A visible locker demo requires location and locker inventory records in MySQL.
+- Demo directions use the public OSRM demo router with driving directions; exact origin/destination coordinates are sent to that third party when directions are requested. Replace this best-effort service and review its privacy/retention terms before production. It does not provide walking turn-by-turn guidance.
+- Nearby-search rate limiting is in-memory per API process and is not shared across multiple workers. Configure a shared limiter before horizontal scaling.
+- Locations and locker inventory must be inserted into MySQL manually; there is no operator setup screen.
+- OpenFreeMap public tiles have no SLA. They are used as a no-cost pilot source; arrange a supported provider or self-hosting plan before production.
 - Manual inbound MQTT event simulation has been exercised, but outbound command receipt by firmware and physical locker operation have not been verified.
 - The local Mosquitto configuration is for development only and must not be exposed publicly.
 - Overstay notifications, unused-booking refunds, tamper/camera workflows, an operator dashboard, and offline PIN access are not implemented.

@@ -43,7 +43,14 @@ class FakeSession:
 async def test_expire_unpaid_booking_releases_locker():
     from app.booking_expiry import expire_unpaid_bookings
 
-    locker = Locker(id=1, location_id=1, size="M", device_id="locker-1", status="held")
+    locker = Locker(
+        id=1,
+        location_id=1,
+        size="M",
+        locker_code="CE101",
+        device_id="locker-1",
+        status="held",
+    )
     booking = Booking(
         id=1,
         user_id=1,

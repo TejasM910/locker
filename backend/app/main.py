@@ -12,7 +12,7 @@ from .booking_expiry import run_booking_expiry_loop
 from .config import settings
 from .db import SessionLocal, get_session
 from .device_events import handle_device_event
-from .routers import auth, bookings, webhooks
+from .routers import auth, bookings, locations, webhooks
 
 log = logging.getLogger("app")
 
@@ -74,6 +74,7 @@ app.add_middleware(
 )
 app.include_router(auth.router)
 app.include_router(bookings.router)
+app.include_router(locations.router)
 app.include_router(webhooks.router)
 
 

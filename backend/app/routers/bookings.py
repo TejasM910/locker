@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,47 +9,54 @@ from ..auth import MAX_UNLOCK_REQUESTS_PER_WINDOW, UNLOCK_RATE_LIMIT_SECONDS, ra
 from ..config import settings
 from ..db import get_session
 from ..models import Booking, Locker, LockerEvent, User, utcnow
-from ..routers.auth import get_user_id_from_auth_header
+from ..routers.auth import current_user_id
 from ..schemas import BookingCreate, BookingOut
 from ..state_machine import UNLOCKABLE
 
 router = APIRouter(prefix="/v1/bookings", tags=["bookings"])
 
 
-async def current_user_id(
-    x_user_id: int | None = Header(default=None, alias="X-User-Id"),
-    authorization: str | None = Header(default=None, alias="Authorization"),
-) -> int:
-    """Supports dev header auth and bearer tokens returned by the OTP flow."""
-    if authorization is not None:
-        token_user_id = await get_user_id_from_auth_header(authorization)
-        if token_user_id is not None:
-            return token_user_id
-    if x_user_id is not None:
-        return x_user_id
-    raise HTTPException(401, "AUTH_REQUIRED")
-
-
 def to_out(b: Booking) -> BookingOut:
-    return BookingOut(public_id=b.public_id, state=b.state.value, amount_paise=b.amount_paise,
-                      duration_hours=b.duration_hours, razorpay_order_id=b.razorpay_order_id,
-                      expires_at=b.expires_at)
+    return BookingOut(
+        public_id=b.public_id,
+        state=b.state.value,
+        locker_code=b.locker.locker_code,
+        size=b.locker.size,
+        amount_paise=b.amount_paise,
+        duration_hours=b.duration_hours,
+        razorpay_order_id=b.razorpay_order_id,
+        expires_at=b.expires_at,
+    )
 
 
 @router.post("", status_code=201, response_model=BookingOut)
 async def create_booking(body: BookingCreate, user_id: int = Depends(current_user_id),
                          session: AsyncSession = Depends(get_session)):
-    price = settings.price_per_hour_paise[body.size]
     async with session.begin():
         if await session.get(User, user_id) is None:
             raise HTTPException(404, "USER_NOT_FOUND")
-        # ADR-2 / REQ-BOOK-002: lock one free locker; concurrent requests skip it
-        locker = (await session.execute(
-            select(Locker).where(Locker.location_id == body.location_id, Locker.size == body.size,
-                                 Locker.status == "free")
-            .limit(1).with_for_update(skip_locked=True))).scalar_one_or_none()
+        # ADR-2 / REQ-BOOK-002: lock the selected free locker transactionally.
+        locker_query = select(Locker).where(Locker.status == "free")
+        if body.locker_code is not None:
+            locker_query = locker_query.where(Locker.locker_code == body.locker_code)
+        else:
+            locker_query = locker_query.where(
+                Locker.location_id == body.location_id,
+                Locker.size == body.size,
+            )
+        locker = (
+            await session.execute(
+                locker_query.limit(1).with_for_update(skip_locked=True)
+            )
+        ).scalar_one_or_none()
+        if locker and (
+            (body.location_id is not None and locker.location_id != body.location_id)
+            or (body.size is not None and locker.size != body.size)
+        ):
+            locker = None
         if locker is None:  # REQ-BOOK-003
             raise HTTPException(409, "NO_LOCKER_AVAILABLE")
+        price = settings.price_per_hour_paise[locker.size]
         locker.status = "held"
         booking = Booking(user_id=user_id, locker_id=locker.id, amount_paise=price * body.duration_hours,
                           duration_hours=body.duration_hours,

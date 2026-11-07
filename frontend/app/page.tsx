@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import QrLocationScanner from "./QrLocationScanner";
+import NearbyLockerMap from "./NearbyLockerMap";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const RAZORPAY_KEY = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ?? "";
@@ -10,11 +10,15 @@ type UserSession = { token: string; userId: number; phone: string };
 type Booking = {
   public_id: string;
   state: string;
+  locker_code: string;
+  size: "M" | "L";
   amount_paise: number;
   duration_hours: number;
   razorpay_order_id: string | null;
   expires_at: string;
 };
+type LockerOption = { locker_code: string; size: "M" | "L"; status: "free" | "held" | "offline" };
+type LocationLockers = { location_id: number; location_name: string; address: string; items: LockerOption[] };
 type RazorpayOptions = {
   key: string;
   amount: number;
@@ -74,13 +78,18 @@ function formatRupees(paise: number): string {
 
 export default function Home() {
   const [session, setSession] = useState<UserSession | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [debugCode, setDebugCode] = useState("");
-  const [locationId, setLocationId] = useState("");
+  const [stage, setStage] = useState<"map" | "lockers" | "payment">("map");
+  const [locationId, setLocationId] = useState<number | null>(null);
+  const [locationName, setLocationName] = useState("");
+  const [locationAddress, setLocationAddress] = useState("");
+  const [lockers, setLockers] = useState<LockerOption[]>([]);
+  const [selectedLockerCode, setSelectedLockerCode] = useState("");
   const [size, setSize] = useState<"M" | "L">("M");
   const [duration, setDuration] = useState(1);
-  const [scannerOpen, setScannerOpen] = useState(false);
   const [booking, setBooking] = useState<Booking | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -91,7 +100,10 @@ export default function Home() {
       const saved = localStorage.getItem("locker-session");
       if (saved) setSession(JSON.parse(saved) as UserSession);
       const savedBooking = localStorage.getItem("locker-booking");
-      if (savedBooking) setBooking(JSON.parse(savedBooking) as Booking);
+      if (savedBooking) {
+        setBooking(JSON.parse(savedBooking) as Booking);
+        setStage("payment");
+      }
       if ("serviceWorker" in navigator) {
         void navigator.serviceWorker.register("/sw.js").catch(() => {
           setNotice("App is available online; offline support could not be enabled.");
@@ -100,6 +112,8 @@ export default function Home() {
     } catch {
       localStorage.removeItem("locker-session");
       localStorage.removeItem("locker-booking");
+    } finally {
+      setSessionLoaded(true);
     }
   }, []);
 
@@ -116,6 +130,11 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [session, booking?.public_id]);
 
+  useEffect(() => {
+    if (!session || !booking || booking.locker_code) return;
+    void refreshBooking().catch(reportError);
+  }, [session, booking?.public_id]);
+
   function reportError(reason: unknown) {
     if (reason instanceof ApiError && reason.status === 401) {
       localStorage.removeItem("locker-session");
@@ -127,12 +146,14 @@ export default function Home() {
     if (reason instanceof ApiError && reason.status === 403 && reason.message === "FORBIDDEN") {
       localStorage.removeItem("locker-booking");
       setBooking(null);
+      setStage("map");
       setError("");
       setNotice("That saved booking belongs to a different account, so it was cleared. Create or load a booking for this signed-in account.");
       return;
     }
     if (reason instanceof ApiError && reason.status === 409 && reason.message === "NO_LOCKER_AVAILABLE") {
-      setError("No free locker matches this location and size. Check the location ID and available locker inventory, or try another size.");
+      setSelectedLockerCode("");
+      setError("That locker was just taken or is no longer available. Select another available locker code.");
       setNotice("");
       return;
     }
@@ -180,19 +201,25 @@ export default function Home() {
 
   async function createBooking(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session) return;
+    if (!session || !selectedLockerCode) return;
     setBusy(true);
     setError("");
     try {
       const created = await api<Booking>("/v1/bookings", session.token, {
         method: "POST",
-        body: JSON.stringify({ location_id: Number(locationId), size, duration_hours: duration })
+        body: JSON.stringify({ locker_code: selectedLockerCode, duration_hours: duration })
       });
       setBooking(created);
       localStorage.setItem("locker-booking", JSON.stringify(created));
+      setStage("payment");
       setNotice("Locker held. Complete payment before the hold expires.");
     } catch (reason) {
       reportError(reason);
+      if (reason instanceof ApiError && reason.status === 409 && locationId) {
+        void api<LocationLockers>(`/v1/locations/${locationId}/lockers`, session.token)
+          .then((result) => setLockers(result.items))
+          .catch(reportError);
+      }
     } finally {
       setBusy(false);
     }
@@ -222,7 +249,7 @@ export default function Home() {
         amount: booking.amount_paise,
         currency: "INR",
         name: "Locker",
-        description: `${booking.duration_hours} hour locker booking`,
+        description: `${booking.locker_code} · ${booking.duration_hours} hour locker booking`,
         order_id: booking.razorpay_order_id,
         handler: () => {
           setNotice("Payment submitted. Waiting for the verified payment webhook to update your booking.");
@@ -277,117 +304,174 @@ export default function Home() {
     localStorage.removeItem("locker-booking");
     setSession(null);
     setBooking(null);
-    setNotice("Signed out.");
+    setStage("map");
+    setNotice("");
   }
 
-  function applyScannedLocation(value: string) {
-    const directId = value.trim().match(/^\d+$/)?.[0];
-    let locationFromUrl = "";
-    try {
-      locationFromUrl = new URL(value).searchParams.get("location_id") ?? "";
-    } catch {
-      const parameter = value.match(/(?:^|[?&])location_id=(\d+)/i);
-      locationFromUrl = parameter?.[1] ?? "";
-    }
-    const scannedId = directId ?? locationFromUrl;
-    if (!scannedId || Number(scannedId) < 1) {
-      setError("This QR code does not contain a valid location ID. Enter it manually instead.");
-      return;
-    }
-    setLocationId(scannedId);
-    setScannerOpen(false);
+  async function loadLockersAtLocation(nextLocationId: number): Promise<boolean> {
+    if (!session) return false;
+    setBusy(true);
     setError("");
-    setNotice(`Location ${scannedId} scanned. Choose your locker details to continue.`);
+    setLocationId(nextLocationId);
+    setSelectedLockerCode("");
+    try {
+      const result = await api<LocationLockers>(`/v1/locations/${nextLocationId}/lockers`, session.token);
+      setLockers(result.items);
+      setLocationName(result.location_name);
+      setLocationAddress(result.address);
+      setStage("lockers");
+      setNotice("");
+      return true;
+    } catch (reason) {
+      reportError(reason);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!sessionLoaded) {
+    return <main className="shell"><p className="nearby-status">Preparing secure sign-in…</p></main>;
+  }
+
+  if (!session) {
+    return (
+      <main className="auth-page shell">
+        <header className="topbar">
+          <a className="brand" href="/" aria-label="Locker sign in"><span className="brand-mark">L</span> locker</a>
+          <span className="secure-label">SECURE STORAGE</span>
+        </header>
+        <section className="auth-card">
+          <p className="eyebrow">WELCOME</p>
+          <h1>Sign in to find your locker.</h1>
+          <p className="intro">Verify your phone number to see nearby locations and reserve a locker.</p>
+          {error && <div className="alert error" role="alert">{error}</div>}
+          {notice && <div className="alert success" role="status">{notice}</div>}
+          <form onSubmit={requestOtp} className="form-stack">
+            <label htmlFor="phone">Phone number</label>
+            <input id="phone" type="tel" autoComplete="tel" required minLength={10} value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+91 98765 43210" />
+            <button className="button secondary" disabled={busy}>{busy ? "Please wait…" : "Send OTP"}</button>
+          </form>
+          {debugCode && <div className="dev-code">Development OTP: <strong>{debugCode}</strong></div>}
+          <form onSubmit={verifyOtp} className="form-stack otp-form">
+            <label htmlFor="otp">6-digit OTP</label>
+            <input id="otp" inputMode="numeric" autoComplete="one-time-code" required pattern="[0-9]{6}" maxLength={6} value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="000000" />
+            <button className="button" disabled={busy || !otp}>{busy ? "Verifying…" : "Verify & continue"}</button>
+          </form>
+        </section>
+      </main>
+    );
   }
 
   return (
-    <main className="shell">
+    <main className="shell app-page">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Locker home"><span className="brand-mark">L</span> locker</a>
-        {session ? <button className="text-button" onClick={signOut}>Sign out</button> : <span className="secure-label">SECURE STORAGE</span>}
+        <a className="brand" href="/" aria-label="Locker map"><span className="brand-mark">L</span> locker</a>
+        <div className="app-user"><span>{session.phone}</span><button className="text-button" onClick={signOut}>Sign out</button></div>
       </header>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {notice && <div className="alert success" role="status">{notice}</div>}
 
-      <section className="hero">
-        <div className="hero-copy">
-          <p className="eyebrow">YOUR DAY, UNBURDENED</p>
-          <h1>Drop your bags.<br /><em>Keep exploring.</em></h1>
-          <p className="intro">Find a spot for your things and get straight back to the good part of your day.</p>
-          <div className="hero-note"><span className="status-dot" /> Secure booking · Pay online · Unlock from your phone</div>
-        </div>
-        <div className="hero-art" aria-hidden="true">
-          <div className="sun" />
-          <div className="arch"><div className="locker-door"><span /><span /><span /></div></div>
-          <div className="plant plant-one">✳</div><div className="plant plant-two">✳</div>
-        </div>
-      </section>
-
-      <section className="workflow">
-        <div className="section-heading">
-          <div><p className="eyebrow">THREE EASY STEPS</p><h2>Make room for more.</h2></div>
-          {session && <span className="signed-in">Signed in · {session.phone}</span>}
-        </div>
-
-        {error && <div className="alert error" role="alert">{error}</div>}
-        {notice && <div className="alert success" role="status">{notice}</div>}
-
-        {!session ? (
-          <div className="steps-grid">
-            <article className="step-card">
-              <span className="step-number">01</span><h3>Verify your number</h3>
-              <p>We’ll use your phone number to secure your booking.</p>
-              <form onSubmit={requestOtp} className="form-stack">
-                <label htmlFor="phone">Phone number</label>
-                <input id="phone" type="tel" autoComplete="tel" required minLength={10} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
-                <button className="button secondary" disabled={busy}>{busy ? "Please wait…" : "Send OTP"}</button>
-              </form>
-              {debugCode && <div className="dev-code">Development OTP: <strong>{debugCode}</strong></div>}
-              <form onSubmit={verifyOtp} className="form-stack otp-form">
-                <label htmlFor="otp">6-digit OTP</label>
-                <input id="otp" inputMode="numeric" autoComplete="one-time-code" required pattern="[0-9]{6}" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value)} placeholder="000000" />
-                <button className="button" disabled={busy || !otp}>{busy ? "Verifying…" : "Verify & continue"}</button>
-              </form>
-            </article>
-            <article className="step-card info-card"><span className="step-number">02</span><h3>Choose your locker</h3><p>Pick a location, locker size, and how long you need it. We’ll hold your locker while you pay.</p><div className="mini-illustration">▣</div></article>
-            <article className="step-card info-card"><span className="step-number">03</span><h3>Pay & unlock</h3><p>Pay securely with Razorpay, then send an unlock command straight from your booking.</p><div className="mini-illustration">↗</div></article>
+      {stage === "map" ? (
+        <NearbyLockerMap onArriveAtLocation={loadLockersAtLocation} />
+      ) : stage === "lockers" ? (
+        <section className="workflow">
+          <button type="button" className="text-button" onClick={() => setStage("map")}>← Back to map</button>
+          <div className="section-heading">
+            <div><p className="eyebrow">YOU’RE AT THE LOCKER LOCATION</p><h1>Choose your locker.</h1><p>{locationName || `Location #${locationId}`} · {locationAddress}</p></div>
           </div>
-        ) : (
-          <div className="booking-layout">
-            <article className="step-card booking-form">
-              <span className="step-number">02</span><h3>Choose your locker</h3>
-              <p>Scan the location QR or enter the ID provided by your locker operator.</p>
-              <button type="button" className="button secondary scan-button" onClick={() => setScannerOpen(true)}>Scan location QR</button>
+          <div className="locker-choice-layout">
+            <article className="step-card locker-choice-card">
+              <h3>Select a size</h3>
+              <div className="size-choice">
+                <button type="button" className={size === "M" ? "selected" : ""} onClick={() => { setSize("M"); setSelectedLockerCode(""); }}>
+                  Medium <span>{formatRupees(4000)} / hour</span>
+                </button>
+                <button type="button" className={size === "L" ? "selected" : ""} onClick={() => { setSize("L"); setSelectedLockerCode(""); }}>
+                  Large <span>{formatRupees(6000)} / hour</span>
+                </button>
+              </div>
+              <h3>Available {size === "M" ? "medium" : "large"} lockers</h3>
+              {busy ? <p>Loading locker inventory…</p> : (
+                <div className="locker-code-list">
+                  {lockers.filter((locker) => locker.size === size).map((locker) => (
+                    <button
+                      type="button"
+                      key={locker.locker_code}
+                      disabled={locker.status !== "free"}
+                      className={`${selectedLockerCode === locker.locker_code ? "selected" : ""} ${locker.status !== "free" ? "unavailable" : ""}`}
+                      onClick={() => setSelectedLockerCode(locker.locker_code)}
+                    >
+                      <strong>{locker.locker_code}</strong>
+                      <span>{locker.status === "free" ? "Available" : locker.status === "held" ? "Reserved" : "Offline"}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!busy && lockers.filter((locker) => locker.size === size && locker.status === "free").length === 0 && (
+                <p className="nearby-unavailable">No {size === "M" ? "medium" : "large"} lockers are available here. Try another size or location.</p>
+              )}
               <form onSubmit={createBooking} className="form-stack">
-                <label htmlFor="location">Location ID</label>
-                <input id="location" type="number" min="1" required value={locationId} onChange={(e) => setLocationId(e.target.value)} placeholder="e.g. 1" />
-                <label htmlFor="size">Locker size</label>
-                <select id="size" value={size} onChange={(e) => setSize(e.target.value as "M" | "L")}><option value="M">Medium · {formatRupees(4000)} / hour</option><option value="L">Large · {formatRupees(6000)} / hour</option></select>
                 <label htmlFor="duration">Duration</label>
-                <div className="duration-control"><button type="button" aria-label="Decrease duration" onClick={() => setDuration(Math.max(1, duration - 1))}>−</button><span>{duration} {duration === 1 ? "hour" : "hours"}</span><button type="button" aria-label="Increase duration" onClick={() => setDuration(Math.min(72, duration + 1))}>+</button></div>
+                <div className="duration-control">
+                  <button type="button" aria-label="Decrease duration" onClick={() => setDuration(Math.max(1, duration - 1))}>−</button>
+                  <span>{duration} {duration === 1 ? "hour" : "hours"}</span>
+                  <button type="button" aria-label="Increase duration" onClick={() => setDuration(Math.min(72, duration + 1))}>+</button>
+                </div>
                 <div className="price-row"><span>Estimated total</span><strong>{formatRupees((size === "M" ? 4000 : 6000) * duration)}</strong></div>
-                <button className="button" disabled={busy}>{busy ? "Reserving…" : "Find & reserve a locker"}</button>
+                <button className="button" disabled={busy || !selectedLockerCode}>{busy ? "Reserving…" : "Continue to payment"}</button>
               </form>
             </article>
-            <article className="step-card current-booking">
-              <span className="step-number">03</span><h3>Your booking</h3>
-              {booking ? (
-                <>
-                  <div className="booking-id">BOOKING <strong>{booking.public_id.slice(0, 8).toUpperCase()}</strong></div>
-                  <div className="booking-state"><span className="state-dot" />{booking.state}</div>
-                  <div className="booking-detail"><span>Duration</span><strong>{booking.duration_hours} {booking.duration_hours === 1 ? "hour" : "hours"}</strong></div>
-                  <div className="booking-detail"><span>Total</span><strong>{formatRupees(booking.amount_paise)}</strong></div>
-                  <div className="booking-detail"><span>Hold expires</span><strong>{new Date(booking.expires_at).toLocaleTimeString()}</strong></div>
-                  {(booking.state === "CREATED" || booking.state === "EXPIRED") && <button className="button" onClick={pay} disabled={busy || booking.state === "EXPIRED" || !booking.razorpay_order_id}>{busy ? "Opening checkout…" : "Pay securely"}</button>}
-                  {["PAID", "STORED", "OVERSTAY"].includes(booking.state) && <button className="button" onClick={unlock} disabled={busy}>{busy ? "Sending command…" : "Unlock locker"}</button>}
-                  <button className="text-button refresh-button" onClick={() => void refreshBooking().catch(reportError)}>Refresh booking status</button>
-                </>
-              ) : <p className="empty-state">Your reservation will appear here once you choose a locker.</p>}
+          </div>
+        </section>
+      ) : (
+        <section className="workflow payment-page">
+          {booking?.state === "EXPIRED" && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                localStorage.removeItem("locker-booking");
+                setBooking(null);
+                setStage("map");
+              }}
+            >
+              ← Find another locker
+            </button>
+          )}
+          <div className="section-heading">
+            <div><p className="eyebrow">BOOKING & PAYMENT</p><h1>Your locker is reserved.</h1></div>
+          </div>
+          {booking ? (
+            <article className="step-card payment-card">
+              <div className="booking-id">BOOKING <strong>{booking.public_id.slice(0, 8).toUpperCase()}</strong></div>
+              <div className="booking-state"><span className="state-dot" />{booking.state}</div>
+              <div className="booking-detail"><span>Locker</span><strong>{booking.locker_code}</strong></div>
+              <div className="booking-detail"><span>Size</span><strong>{booking.size === "M" ? "Medium" : "Large"}</strong></div>
+              <div className="booking-detail"><span>Duration</span><strong>{booking.duration_hours} {booking.duration_hours === 1 ? "hour" : "hours"}</strong></div>
+              <div className="booking-detail"><span>Total</span><strong>{formatRupees(booking.amount_paise)}</strong></div>
+              <div className="booking-detail"><span>Hold expires</span><strong>{new Date(booking.expires_at).toLocaleTimeString()}</strong></div>
+              {(booking.state === "CREATED" || booking.state === "EXPIRED") && (
+                <button className="button" onClick={pay} disabled={busy || booking.state === "EXPIRED" || !booking.razorpay_order_id}>
+                  {busy ? "Opening checkout…" : "Pay securely"}
+                </button>
+              )}
+              {["PAID", "STORED", "OVERSTAY"].includes(booking.state) && (
+                <button className="button" onClick={unlock} disabled={busy}>
+                  {busy ? "Sending command…" : "Unlock locker"}
+                </button>
+              )}
+              <button className="text-button refresh-button" onClick={() => void refreshBooking().catch(reportError)}>Refresh booking status</button>
               {!RAZORPAY_KEY && <p className="config-note">Checkout needs a Razorpay key configured in the frontend environment.</p>}
             </article>
-          </div>
-        )}
-      </section>
-
-      {scannerOpen && <QrLocationScanner onScan={applyScannedLocation} onClose={() => setScannerOpen(false)} />}
+          ) : (
+            <>
+              <p className="empty-state">No active booking was found. Return to the map to choose a locker.</p>
+              <button type="button" className="button" onClick={() => setStage("map")}>Open map</button>
+            </>
+          )}
+        </section>
+      )}
       <footer><span>LOCKER · STORAGE MADE SIMPLE</span><span>Need help? Contact your location operator.</span></footer>
     </main>
   );

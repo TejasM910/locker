@@ -12,9 +12,11 @@ INTEGRATION_ONLY = {
 
 
 def test_every_m1_requirement_has_a_test():
-    text = (SPECS / "requirements.md").read_text()
+    text = (SPECS / "requirements.md").read_text(encoding="utf-8")
     m1 = set(re.findall(r"\*\*(REQ-[A-Z]+-\d+)\*\* \(M1\)", text))
-    tests = "\n".join(p.read_text() for p in Path(__file__).parent.glob("test_*.py"))
+    tests = "\n".join(
+        p.read_text(encoding="utf-8") for p in Path(__file__).parent.glob("test_*.py")
+    )
     covered = set(re.findall(r'req\("(REQ-[A-Z]+-\d+)"\)', tests))
     uncovered = m1 - covered - INTEGRATION_ONLY
     assert not uncovered, f"M1 requirements without tests: {sorted(uncovered)}"

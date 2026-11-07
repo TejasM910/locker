@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (JSON, BigInteger, DateTime, Enum as SAEnum, ForeignKey,
-                        Integer, String, UniqueConstraint)
+                        Index, Integer, String, UniqueConstraint)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from .state_machine import State
@@ -29,6 +29,7 @@ class User(Base):
 
 class Location(Base):
     __tablename__ = "locations"
+    __table_args__ = (Index("ix_locations_lat_lng", "lat", "lng"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
     address: Mapped[str] = mapped_column(String(255), default="")
@@ -41,6 +42,7 @@ class Locker(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"), index=True)
     size: Mapped[str] = mapped_column(String(2))  # M | L
+    locker_code: Mapped[str] = mapped_column(String(16), unique=True)
     device_id: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[str] = mapped_column(String(10), default="free", index=True)  # free|held|offline
 
