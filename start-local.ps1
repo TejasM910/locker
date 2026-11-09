@@ -9,7 +9,23 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LauncherPath = $PSCommandPath
 $Backend = Join-Path $Root "backend"
 $Frontend = Join-Path $Root "frontend"
+$backendEnv = Join-Path $Root ".env"
 $MqttExe = "C:\Program Files\Mosquitto\mosquitto.exe"
+
+$settings = @{}
+if (Test-Path $backendEnv) {
+    foreach ($line in Get-Content $backendEnv) {
+        if ($line -match '^\s*([^#=\s]+)\s*=\s*(.*)$') {
+            $settings[$Matches[1]] = $Matches[2].Trim()
+        }
+    }
+}
+$env:NEXT_PUBLIC_API_BASE_URL = if ($settings["NEXT_PUBLIC_API_BASE_URL"]) {
+    $settings["NEXT_PUBLIC_API_BASE_URL"]
+} else {
+    "http://localhost:8000"
+}
+$env:NEXT_PUBLIC_RAZORPAY_KEY_ID = $settings["NEXT_PUBLIC_RAZORPAY_KEY_ID"]
 
 function Test-PortListening([int]$Port) {
     return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
@@ -61,15 +77,11 @@ if ($Service) {
     exit $LASTEXITCODE
 }
 
-$backendEnv = Join-Path $Root ".env"
-$frontendEnv = Join-Path $Frontend ".env.local"
 $missing = @()
 foreach ($key in @("DATABASE_URL", "SYNC_DATABASE_URL", "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET")) {
     if (-not (Test-EnvValue $backendEnv $key)) { $missing += ".env: $key" }
 }
-foreach ($key in @("NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_RAZORPAY_KEY_ID")) {
-    if (-not (Test-EnvValue $frontendEnv $key)) { $missing += "frontend/.env.local: $key" }
-}
+if (-not $settings["NEXT_PUBLIC_RAZORPAY_KEY_ID"]) { $missing += ".env: NEXT_PUBLIC_RAZORPAY_KEY_ID" }
 
 if ($missing.Count -gt 0) {
     Write-Host "Configure these values before starting the payment flow:" -ForegroundColor Yellow
@@ -114,7 +126,7 @@ if (Test-PortListening 8000) {
 }
 
 if (Test-PortListening 3000) {
-    Write-Host "A frontend process is already listening on port 3000; reusing it. Restart it manually if you changed frontend/.env.local."
+    Write-Host "A frontend process is already listening on port 3000; reusing it. Restart it manually if you changed .env."
 } else {
     Start-ServiceWindow "Frontend"
     if (-not (Wait-Port 3000 60)) { Write-Warning "Frontend did not become ready on port 3000. Check its window." }

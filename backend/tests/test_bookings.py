@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +7,13 @@ from fastapi import HTTPException
 from app.routers import bookings as booking_router
 from app.schemas import BookingCreate
 from app.state_machine import State
+
+
+def test_booking_timestamps_are_serialized_as_utc():
+    timestamp = datetime(2026, 11, 9, 12, 0)
+
+    assert booking_router.as_utc(timestamp) == timestamp.replace(tzinfo=timezone.utc)
+    assert booking_router.as_utc(None) is None
 
 
 class FakeResult:

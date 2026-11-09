@@ -16,6 +16,7 @@ type Booking = {
   duration_hours: number;
   razorpay_order_id: string | null;
   expires_at: string;
+  ends_at: string | null;
 };
 type LockerOption = { locker_code: string; size: "M" | "L"; status: "free" | "held" | "offline" };
 type LocationLockers = { location_id: number; location_name: string; address: string; items: LockerOption[] };
@@ -76,13 +77,23 @@ function formatRupees(paise: number): string {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(paise / 100);
 }
 
+function formatRemainingTime(deadline: string | null, now: number): string {
+  if (!deadline) return "Loading booking time…";
+  const totalSeconds = Math.max(0, Math.ceil((new Date(deadline).getTime() - now) / 1000));
+  if (totalSeconds === 0) return "Time elapsed";
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
 export default function Home() {
   const [session, setSession] = useState<UserSession | null>(null);
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [debugCode, setDebugCode] = useState("");
-  const [stage, setStage] = useState<"map" | "lockers" | "payment">("map");
+  const [stage, setStage] = useState<"map" | "lockers" | "active-locker">("map");
   const [locationId, setLocationId] = useState<number | null>(null);
   const [locationName, setLocationName] = useState("");
   const [locationAddress, setLocationAddress] = useState("");
@@ -91,9 +102,17 @@ export default function Home() {
   const [size, setSize] = useState<"M" | "L">("M");
   const [duration, setDuration] = useState(1);
   const [booking, setBooking] = useState<Booking | null>(null);
+  const [now, setNow] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    const updateTime = () => setNow(Date.now());
+    updateTime();
+    const timer = window.setInterval(updateTime, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     try {
@@ -102,7 +121,6 @@ export default function Home() {
       const savedBooking = localStorage.getItem("locker-booking");
       if (savedBooking) {
         setBooking(JSON.parse(savedBooking) as Booking);
-        setStage("payment");
       }
       if ("serviceWorker" in navigator) {
         void navigator.serviceWorker.register("/sw.js").catch(() => {
@@ -119,14 +137,16 @@ export default function Home() {
 
   useEffect(() => {
     if (!session || !booking) return;
-    const timer = window.setInterval(() => {
+    const refresh = () => {
       void api<Booking>(`/v1/bookings/${booking.public_id}`, session.token)
         .then((latest) => {
           setBooking(latest);
           localStorage.setItem("locker-booking", JSON.stringify(latest));
         })
         .catch(reportError);
-    }, 10000);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 10000);
     return () => window.clearInterval(timer);
   }, [session, booking?.public_id]);
 
@@ -211,7 +231,7 @@ export default function Home() {
       });
       setBooking(created);
       localStorage.setItem("locker-booking", JSON.stringify(created));
-      setStage("payment");
+      setStage("map");
       setNotice("Locker held. Complete payment before the hold expires.");
     } catch (reason) {
       reportError(reason);
@@ -308,6 +328,12 @@ export default function Home() {
     setNotice("");
   }
 
+  function showActiveLocker() {
+    if (stage !== "active-locker") {
+      setStage("active-locker");
+    }
+  }
+
   async function loadLockersAtLocation(nextLocationId: number): Promise<boolean> {
     if (!session) return false;
     setBusy(true);
@@ -363,11 +389,26 @@ export default function Home() {
     );
   }
 
+  const activeBooking = booking && !["RELEASED", "EXPIRED", "CANCELLED"].includes(booking.state);
+  const countdownDeadline = booking?.state === "CREATED"
+    ? booking.expires_at
+    : booking && ["PAID", "STORED", "OVERSTAY", "DISPUTED"].includes(booking.state)
+      ? booking.ends_at
+      : null;
+
   return (
     <main className="shell app-page">
       <header className="topbar">
         <a className="brand" href="/" aria-label="Locker map"><span className="brand-mark">L</span> locker</a>
-        <div className="app-user"><span>{session.phone}</span><button className="text-button" onClick={signOut}>Sign out</button></div>
+        <div className="app-user">
+          <span>{session.phone}</span>
+          {activeBooking && (
+            <button type="button" className="text-button" onClick={showActiveLocker} aria-current={stage === "active-locker" ? "page" : undefined}>
+              Active locker
+            </button>
+          )}
+          <button className="text-button" onClick={signOut}>Sign out</button>
+        </div>
       </header>
       {error && <div className="alert error" role="alert">{error}</div>}
       {notice && <div className="alert success" role="status">{notice}</div>}
@@ -425,22 +466,13 @@ export default function Home() {
           </div>
         </section>
       ) : (
-        <section className="workflow payment-page">
-          {booking?.state === "EXPIRED" && (
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => {
-                localStorage.removeItem("locker-booking");
-                setBooking(null);
-                setStage("map");
-              }}
-            >
-              ← Find another locker
-            </button>
-          )}
+        <section className="workflow payment-page active-locker-page">
+          <button type="button" className="text-button" onClick={() => setStage("map")}>← Back to map</button>
           <div className="section-heading">
-            <div><p className="eyebrow">BOOKING & PAYMENT</p><h1>Your locker is reserved.</h1></div>
+            <div>
+              <p className="eyebrow">{activeBooking ? "ACTIVE LOCKER" : "BOOKING"}</p>
+              <h1>{activeBooking ? "Your locker details." : booking?.state === "EXPIRED" ? "Reservation expired." : "Locker booking."}</h1>
+            </div>
           </div>
           {booking ? (
             <article className="step-card payment-card">
@@ -450,7 +482,20 @@ export default function Home() {
               <div className="booking-detail"><span>Size</span><strong>{booking.size === "M" ? "Medium" : "Large"}</strong></div>
               <div className="booking-detail"><span>Duration</span><strong>{booking.duration_hours} {booking.duration_hours === 1 ? "hour" : "hours"}</strong></div>
               <div className="booking-detail"><span>Total</span><strong>{formatRupees(booking.amount_paise)}</strong></div>
-              <div className="booking-detail"><span>Hold expires</span><strong>{new Date(booking.expires_at).toLocaleTimeString()}</strong></div>
+              {activeBooking && (
+                <>
+                  <div className="booking-countdown" role="timer" aria-label={`Time remaining: ${formatRemainingTime(countdownDeadline, now)}`}>
+                    <span>Time remaining</span>
+                    <strong>{formatRemainingTime(countdownDeadline, now)}</strong>
+                  </div>
+                  {countdownDeadline && (
+                    <div className="booking-detail">
+                      <span>{booking.state === "CREATED" ? "Reservation hold expires" : "Booking ends"}</span>
+                      <strong>{new Date(countdownDeadline).toLocaleString()}</strong>
+                    </div>
+                  )}
+                </>
+              )}
               {(booking.state === "CREATED" || booking.state === "EXPIRED") && (
                 <button className="button" onClick={pay} disabled={busy || booking.state === "EXPIRED" || !booking.razorpay_order_id}>
                   {busy ? "Opening checkout…" : "Pay securely"}
@@ -466,7 +511,7 @@ export default function Home() {
             </article>
           ) : (
             <>
-              <p className="empty-state">No active booking was found. Return to the map to choose a locker.</p>
+              <p className="empty-state">No booking is available. Return to the map to choose a locker.</p>
               <button type="button" className="button" onClick={() => setStage("map")}>Open map</button>
             </>
           )}

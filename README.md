@@ -8,8 +8,8 @@ A spec-driven locker booking prototype. Travelers use a mobile-friendly web app 
 
 1. **Sign in:** An unauthenticated visitor sees the phone/OTP sign-in screen before any map or locker controls. In development, the API returns the OTP as `debug_code`; there is no SMS delivery. A valid restored session opens the map directly.
 2. **Find and navigate:** The traveler browses nearby locker markers and explicitly starts the previously disclosed OSRM driving route to a selected location. Foreground GPS updates show route progress; arrival is detected within 50 m, with a manual “I’m here” fallback.
-3. **Choose a locker:** After arrival confirmation, the PWA fetches individual free lockers for the location, showing stable public codes (for example `CH101`) and sizes. The traveler selects a specific code and duration; the API reserves exactly that locker or rejects a stale choice. An unpaid hold expires after 15 minutes.
-4. **Pay:** The PWA shows a dedicated booking/payment step and opens Razorpay only after the traveler presses the checkout button. A valid `payment.captured` webhook moves the booking to `PAID`. The backend verifies the webhook signature and handles duplicate event delivery.
+3. **Choose a locker:** After arrival confirmation, the PWA fetches individual free lockers for the location, showing stable public codes (for example `CH101`) and sizes. The traveler selects a specific code and duration; the API reserves exactly that locker or rejects a stale choice, then returns the traveler to the map. An **Active locker** button appears in the signed-in header; selecting it opens the locker details, payment action, and a live countdown to the unpaid hold expiry (15 minutes). Its back button returns to the map.
+4. **Pay:** The PWA opens Razorpay only after the traveler presses the checkout button. A valid `payment.captured` webhook moves the booking to `PAID` and starts its booked-duration countdown. The backend verifies the webhook signature and handles duplicate event delivery.
 5. **Unlock:** After payment is verified, the traveler explicitly presses **Unlock locker**. When MQTT is enabled, the API publishes a command to `lockers/{device_id}/cmd`; otherwise it logs the would-be command. A device or simulator reports events on `lockers/{device_id}/evt`.
 6. **Track and release:** A `door_closed` event moves a paid booking to `STORED`. A `pickup_completed` event moves it to `RELEASED` and frees the locker. Booking changes and device events are persisted for audit.
 
@@ -58,13 +58,7 @@ Copy-Item .env.example .env
 
 Set `DATABASE_URL` and `SYNC_DATABASE_URL` to your local MySQL database. The async URL uses the `mysql+asyncmy` driver; the sync URL uses `mysql+pymysql`. URL-encode special characters in the database password (for example, `@` becomes `%40`). Keep real credentials only in `.env`.
 
-Create `frontend/.env.local` from its template:
-
-```powershell
-Copy-Item frontend\.env.example frontend\.env.local
-```
-
-Set `NEXT_PUBLIC_RAZORPAY_KEY_ID` to your Razorpay **public** test key ID. Never put Razorpay secrets in frontend variables. Both `.env` and `.env.local` are excluded from Git.
+Set `NEXT_PUBLIC_RAZORPAY_KEY_ID` in the same root `.env` to your Razorpay **public** test key ID. The local launcher passes this public key to the frontend; do not put Razorpay secrets in frontend variables. The root `.env` is excluded from Git.
 
 ### 2. Install dependencies
 
@@ -128,13 +122,13 @@ Selecting a nearby marker can also request in-app **driving** directions from th
 
 ### 5. Start the local services
 
-Start MySQL first. Configure the root `.env` and `frontend/.env.local`, then run this once from the project root:
+Configure the root `.env`, then double-click `run-locker.bat` in the project folder. Alternatively, start it from PowerShell:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1
 ```
 
-The launcher reuses listeners already running on the expected ports and opens a separate PowerShell window for each service it starts. Keep those windows open. It starts or checks MySQL, Mosquitto, the API, the frontend, and ngrok. It does not install dependencies or create the database. Restart the API or frontend manually after changing that service's environment file.
+The launcher reuses listeners already running on the expected ports and opens a separate PowerShell window for each service it starts. Keep those windows open. It starts or checks MySQL, Mosquitto, the API, the frontend, and ngrok. It does not install dependencies or create the database; complete the one-time setup steps above first. Restart the API and frontend after changing `.env`.
 
 - PWA: [http://localhost:3000](http://localhost:3000)
 - API docs: [http://localhost:8000/docs](http://localhost:8000/docs)

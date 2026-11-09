@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -16,6 +16,14 @@ from ..state_machine import UNLOCKABLE
 router = APIRouter(prefix="/v1/bookings", tags=["bookings"])
 
 
+def as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def to_out(b: Booking) -> BookingOut:
     return BookingOut(
         public_id=b.public_id,
@@ -25,7 +33,8 @@ def to_out(b: Booking) -> BookingOut:
         amount_paise=b.amount_paise,
         duration_hours=b.duration_hours,
         razorpay_order_id=b.razorpay_order_id,
-        expires_at=b.expires_at,
+        expires_at=as_utc(b.expires_at),
+        ends_at=as_utc(b.ends_at),
     )
 
 

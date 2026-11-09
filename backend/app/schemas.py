@@ -26,3 +26,4 @@ class BookingOut(BaseModel):
     duration_hours: int
     razorpay_order_id: str | None
     expires_at: datetime
+    ends_at: datetime | None
