@@ -175,6 +175,7 @@ Payment-provider webhooks authenticate using the provider signature and use the 
 - Integration-test concurrent holds against the real database engine. Fire 100 parallel requests at one available locker; assert exactly one succeeds, the rest conflict, one active booking exists, and the locker is held.
 - Test expiry racing confirmation, payment arriving after expiry, cancellation racing a new hold, duplicate idempotency keys, duplicate webhooks, and worker/API concurrency.
 - Run concurrency tests with separate database connections/processes; an in-memory fake does not verify database locking semantics.
+- The race-test utility targets loopback by default. Remote targets require an explicit opt-in and HTTPS so bearer tokens are not sent over plaintext HTTP; development OTP sign-in is restricted to loopback.
 
 ## Implementation checklist
 

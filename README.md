@@ -159,6 +159,18 @@ npm run build
 
 The backend tests include API-contract, requirement-traceability, booking-state, payment, authentication, and expiry-worker checks. The contract is maintained in [specs/openapi.yaml](./specs/openapi.yaml).
 
+### Race-test one locker with 100 requests
+
+The local concurrency runner sends 100 hold requests together to a single available locker, expects exactly one hold and 99 `NO_LOCKER_AVAILABLE` conflicts, then cancels the winning unpaid hold. It creates a payment order but does not charge a payment method. Use a demo locker in a local test database; do not race a locker currently being used by a customer.
+
+Run from the repository root with the local API running:
+
+```powershell
+python .\backend\scripts\test_booking_race.py --locker-code CH101 --phone "<your-local-test-phone>"
+```
+
+The local development OTP is requested and verified automatically. Alternatively, set `LOCKER_TEST_TOKEN` to a valid bearer token and omit `--phone`. Use `--rounds 5` to repeat the race five times; each round cancels its winning unpaid hold before continuing. The runner defaults to localhost, refuses remote hosts unless `--allow-remote` is explicitly supplied, and requires HTTPS for remote hosts. Only use it against a test environment you control.
+
 ## Current limitations and remaining work
 
 - OTP is returned in the API response for development; SMS delivery is not implemented.
