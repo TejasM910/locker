@@ -4,7 +4,7 @@ import asyncio
 import logging
 from contextlib import suppress
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import SessionLocal
@@ -20,14 +20,18 @@ async def expire_unpaid_bookings(session: AsyncSession) -> int:
     rows = (
         await session.execute(
             select(Booking)
-            .where(Booking.state == State.CREATED, Booking.expires_at <= now)
+            .where(Booking.state == State.CREATED, Booking.expires_at <= func.utc_timestamp(3))
             .with_for_update(skip_locked=True)
         )
     ).scalars().all()
 
     count = 0
     for booking in rows:
-        locker = await session.get(Locker, booking.locker_id)
+        locker = (
+            await session.execute(
+                select(Locker).where(Locker.id == booking.locker_id).with_for_update()
+            )
+        ).scalar_one_or_none()
         if locker is None:
             continue
         try:
@@ -35,7 +39,8 @@ async def expire_unpaid_bookings(session: AsyncSession) -> int:
         except InvalidTransition:
             continue
 
-        locker.status = "free"
+        if locker.status == "held":
+            locker.status = "free"
         session.add(
             LockerEvent(
                 locker_id=locker.id,

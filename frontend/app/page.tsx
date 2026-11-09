@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import NearbyLockerMap from "./NearbyLockerMap";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -103,6 +103,7 @@ export default function Home() {
   const [duration, setDuration] = useState(1);
   const [booking, setBooking] = useState<Booking | null>(null);
   const [now, setNow] = useState(0);
+  const bookingRequestRef = useRef<{ body: string; key: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -224,17 +225,27 @@ export default function Home() {
     if (!session || !selectedLockerCode) return;
     setBusy(true);
     setError("");
+    const requestBody = { locker_code: selectedLockerCode, duration_hours: duration };
+    const bodyKey = JSON.stringify(requestBody);
+    if (bookingRequestRef.current?.body !== bodyKey) {
+      bookingRequestRef.current = { body: bodyKey, key: crypto.randomUUID() };
+    }
     try {
       const created = await api<Booking>("/v1/bookings", session.token, {
         method: "POST",
-        body: JSON.stringify({ locker_code: selectedLockerCode, duration_hours: duration })
+        headers: { "Idempotency-Key": bookingRequestRef.current.key },
+        body: bodyKey
       });
+      bookingRequestRef.current = null;
       setBooking(created);
       localStorage.setItem("locker-booking", JSON.stringify(created));
       setStage("map");
       setNotice("Locker held. Complete payment before the hold expires.");
     } catch (reason) {
       reportError(reason);
+      if (reason instanceof ApiError && reason.status === 502) {
+        bookingRequestRef.current = null;
+      }
       if (reason instanceof ApiError && reason.status === 409 && locationId) {
         void api<LocationLockers>(`/v1/locations/${locationId}/lockers`, session.token)
           .then((result) => setLockers(result.items))
@@ -312,6 +323,27 @@ export default function Home() {
         method: "POST"
       });
       setNotice(`Unlock command sent to the locker (command ${result.cmd_id}).`);
+    } catch (reason) {
+      reportError(reason);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelBooking() {
+    if (!session || !booking || !window.confirm("Cancel this unpaid locker reservation?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api<{ state: string }>(
+        `/v1/bookings/${booking.public_id}/cancel`,
+        session.token,
+        { method: "POST" }
+      );
+      setBooking(null);
+      localStorage.removeItem("locker-booking");
+      setStage("map");
+      setNotice("Reservation cancelled and locker released.");
     } catch (reason) {
       reportError(reason);
     } finally {
@@ -499,6 +531,11 @@ export default function Home() {
               {(booking.state === "CREATED" || booking.state === "EXPIRED") && (
                 <button className="button" onClick={pay} disabled={busy || booking.state === "EXPIRED" || !booking.razorpay_order_id}>
                   {busy ? "Opening checkout…" : "Pay securely"}
+                </button>
+              )}
+              {booking.state === "CREATED" && (
+                <button className="button secondary" onClick={() => void cancelBooking()} disabled={busy}>
+                  Cancel reservation
                 </button>
               )}
               {["PAID", "STORED", "OVERSTAY"].includes(booking.state) && (

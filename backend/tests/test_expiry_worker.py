@@ -17,6 +17,9 @@ class FakeResult:
     def all(self):
         return self._rows
 
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
 
 class FakeSession:
     def __init__(self, booking, locker):
@@ -24,7 +27,9 @@ class FakeSession:
         self.locker = locker
         self.events = []
 
-    async def execute(self, *_args, **_kwargs):
+    async def execute(self, query, **_kwargs):
+        if "FROM lockers" in str(query):
+            return FakeResult([self.locker])
         return FakeResult([self.booking])
 
     async def get(self, model, pk):

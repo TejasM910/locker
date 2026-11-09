@@ -3,15 +3,16 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import rate_limited
 from ..db import get_session
-from ..models import Locker, Location
+from ..models import Booking, Locker, Location
 from .auth import current_user_id
 
 router = APIRouter(prefix="/v1/locations", tags=["locations"])
+ACTIVE_BOOKING_STATES = ("CREATED", "PAID", "STORED", "OVERSTAY", "DISPUTED")
 
 EARTH_RADIUS_METERS = 6_371_008.8
 DEFAULT_RADIUS_METERS = 1_000
@@ -115,6 +116,13 @@ async def list_nearby_locations(
     min_latitude, max_latitude, longitude_ranges = _bounding_box(
         body.latitude, body.longitude, body.radius_m
     )
+    active_locker_booking = exists(
+        select(1).where(
+            Booking.locker_id == Locker.id,
+            Booking.state.in_(ACTIVE_BOOKING_STATES),
+        )
+    )
+    available = (Locker.status == "free") & ~active_locker_booking
     candidate_query = (
         select(
             Location.id,
@@ -123,10 +131,10 @@ async def list_nearby_locations(
             Location.lat,
             Location.lng,
             func.coalesce(
-                func.sum(case(((Locker.status == "free") & (Locker.size == "M"), 1), else_=0)), 0
+                func.sum(case((available & (Locker.size == "M"), 1), else_=0)), 0
             ).label("free_medium"),
             func.coalesce(
-                func.sum(case(((Locker.status == "free") & (Locker.size == "L"), 1), else_=0)), 0
+                func.sum(case((available & (Locker.size == "L"), 1), else_=0)), 0
             ).label("free_large"),
         )
         .outerjoin(Locker, Locker.location_id == Location.id)
@@ -180,9 +188,19 @@ async def list_location_lockers(
     location = await session.get(Location, location_id)
     if location is None:
         raise HTTPException(404, "LOCATION_NOT_FOUND")
+    active_booking = exists(
+        select(1).where(
+            Booking.locker_id == Locker.id,
+            Booking.state.in_(ACTIVE_BOOKING_STATES),
+        )
+    )
     lockers = (
         await session.execute(
-            select(Locker.locker_code, Locker.size, Locker.status)
+            select(
+                Locker.locker_code,
+                Locker.size,
+                case(((Locker.status == "free") & active_booking, "held"), else_=Locker.status),
+            )
             .where(Locker.location_id == location_id)
             .order_by(Locker.locker_code)
         )

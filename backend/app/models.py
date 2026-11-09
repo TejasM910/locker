@@ -64,6 +64,19 @@ class Booking(Base):
     locker: Mapped[Locker] = relationship(lazy="joined")
 
 
+class BookingRequest(Base):
+    __tablename__ = "booking_requests"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_booking_request_user_key"),
+        UniqueConstraint("booking_id", name="uq_booking_request_booking"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    booking_id: Mapped[int | None] = mapped_column(ForeignKey("bookings.id"), nullable=True)
+
+
 class Payment(Base):
     __tablename__ = "payments"
     __table_args__ = (UniqueConstraint("gateway_event_id", name="uq_payment_event"),)  # ADR-3

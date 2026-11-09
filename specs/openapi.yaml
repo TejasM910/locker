@@ -86,9 +86,14 @@ paths:
   /v1/bookings:
     post:
       operationId: create_booking
-      description: REQ-BOOK-001/002/003/007. Requires OTP bearer auth; reserve the exact available locker_code in one transaction. X-User-Id is retained as a development fallback.
+      description: REQ-BOOK-001/002/003/007. Requires OTP bearer auth; reserve the exact available locker_code in a short transaction. Optional Idempotency-Key replays the original booking for the same request and rejects key reuse with a different payload. Payment order creation runs after the locker transaction commits. X-User-Id is retained as a development fallback.
       security:
         - BearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, minLength: 8, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -106,7 +111,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [public_id, state, locker_code, size, amount_paise, duration_hours, razorpay_order_id, expires_at]
+                required: [public_id, state, locker_code, size, amount_paise, duration_hours, razorpay_order_id, expires_at, ends_at]
                 properties:
                   public_id: { type: string }
                   state: { type: string }
@@ -116,13 +121,31 @@ paths:
                   duration_hours: { type: integer }
                   razorpay_order_id: { type: [string, "null"] }
                   expires_at: { type: string, format: date-time }
+                  ends_at: { type: [string, "null"], format: date-time }
         "409": { description: NO_LOCKER_AVAILABLE; exact locker cannot be reserved }
+        "502": { description: Payment order creation failed; the created hold is cancelled and released }
   /v1/bookings/{public_id}:
     get:
       operationId: get_booking
       security:
         - BearerAuth: []
       responses: { "200": { description: ok }, "404": { description: not found } }
+  /v1/bookings/{public_id}/cancel:
+    post:
+      operationId: cancel_booking
+      description: Cancel an unpaid hold and free its locker atomically. Paid bookings require a separate refund flow and cannot be cancelled here.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: public_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: cancelled; repeated cancellation is idempotent }
+        "403": { description: booking belongs to another user }
+        "404": { description: booking not found }
+        "409": { description: booking is not an unpaid hold }
   /v1/bookings/{public_id}/unlock:
     post:
       operationId: unlock_booking
@@ -133,7 +156,7 @@ paths:
   /v1/webhooks/razorpay:
     post:
       operationId: razorpay_webhook
-      description: REQ-PAY-001/002/003
+      description: REQ-PAY-001/002/003. Handles signed payment.captured and payment.failed events; a failed attempt is recorded while the unpaid hold remains retryable until cancellation or expiry.
       responses: { "200": { description: ok }, "400": { description: bad signature } }
   /v1/auth/otp/request:
     post:
