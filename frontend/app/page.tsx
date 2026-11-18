@@ -239,7 +239,7 @@ export default function Home() {
       bookingRequestRef.current = null;
       setBooking(created);
       localStorage.setItem("locker-booking", JSON.stringify(created));
-      setStage("map");
+      setStage("active-locker");
       setNotice("Locker held. Complete payment before the hold expires.");
     } catch (reason) {
       reportError(reason);

@@ -36,7 +36,7 @@
 - [x] Gate the app behind OTP sign-in and make the authenticated map the primary screen (REQ-PWA-002).
 - [x] Add 50 m arrival detection and manual arrival confirmation before exposing individual locker selection (REQ-PWA-003, REQ-LOC-011).
 - [x] Add stable location-derived unique locker codes, inventory retrieval, and exact-code transactional reservation (REQ-BOOK-006..007, REQ-PWA-004).
-- [x] Add the dedicated booking/payment step with explicit checkout and unlock only after verified payment (REQ-PWA-004).
+- [x] Add the dedicated booking/payment step with explicit checkout and unlock only after verified payment (REQ-PWA-004); seamlessly transitions directly to the payment/active-locker view upon hold creation without returning to the map.
 - [ ] Browser-verify sign-in -> navigation/arrival -> locker-code selection -> payment -> paid-state unlock using simulated GPS and test payment.
 - [ ] Add MQTT heartbeat freshness/offline handling before presenting inventory as verified live availability; current map uses persisted locker status only.
 - [ ] Load-test map queries and availability polling for the proposed 100-1,000 concurrent-user range; current per-IP rate limiter is process-local.

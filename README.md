@@ -8,7 +8,7 @@ A spec-driven locker booking prototype. Travelers use a mobile-friendly web app 
 
 1. **Sign in:** An unauthenticated visitor sees the phone/OTP sign-in screen before any map or locker controls. In development, the API returns the OTP as `debug_code`; there is no SMS delivery. A valid restored session opens the map directly.
 2. **Find and navigate:** The traveler browses nearby locker markers and explicitly starts the previously disclosed OSRM driving route to a selected location. Foreground GPS updates show route progress; arrival is detected within 50 m, with a manual “I’m here” fallback.
-3. **Choose a locker:** After arrival confirmation, the PWA fetches individual free lockers for the location, showing stable public codes (for example `CH101`) and sizes. The traveler selects a specific code and duration; the API reserves exactly that locker or rejects a stale choice, then returns the traveler to the map. An **Active locker** button appears in the signed-in header; selecting it opens the locker details, payment action, and a live countdown to the unpaid hold expiry (15 minutes). Its back button returns to the map.
+3. **Choose a locker:** After arrival confirmation, the PWA fetches individual free lockers for the location, showing stable public codes (for example `CH101`) and sizes. The traveler selects a specific code and duration; the API reserves exactly that locker or rejects a stale choice. Upon reservation, the traveler is taken directly to the **Active locker** checkout screen with locker details, payment action, and a live countdown to the unpaid hold expiry (15 minutes). If the user leaves the page or returns to the map, an **Active locker** button in the top navigation allows returning to the hold and completing payment at any time before expiry.
 4. **Pay:** The PWA opens Razorpay only after the traveler presses the checkout button. A valid `payment.captured` webhook moves the booking to `PAID` and starts its booked-duration countdown. The backend verifies the webhook signature and handles duplicate event delivery.
 5. **Unlock:** After payment is verified, the traveler explicitly presses **Unlock locker**. When MQTT is enabled, the API publishes a command to `lockers/{device_id}/cmd`; otherwise it logs the would-be command. A device or simulator reports events on `lockers/{device_id}/evt`.
 6. **Track and release:** A `door_closed` event moves a paid booking to `STORED`. A `pickup_completed` event moves it to `RELEASED` and frees the locker. Booking changes and device events are persisted for audit.
@@ -122,7 +122,15 @@ Selecting a nearby marker can also request in-app **driving** directions from th
 
 ### 5. Start the local services
 
-Configure the root `.env`, then double-click `run-locker.bat` in the project folder. Alternatively, start it from PowerShell:
+You can start all required services with a single command using the one-click Python runner from the project root:
+
+```powershell
+python start.py
+```
+
+`start.py` checks MySQL, launches Mosquitto MQTT, starts the FastAPI backend and Next.js frontend, connects ngrok, waits for all services to become ready, and automatically opens `http://localhost:3000` in your default browser.
+
+Alternatively, you can double-click `run-locker.bat` in the project folder or run the PowerShell script:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1
