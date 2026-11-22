@@ -3,6 +3,14 @@
 ## Current completion status
 - **Backend foundation (M1): complete**
 - **OTP auth backend (M2 development flow): complete**
+- **Architecture refactoring (SOLID Modular Monolith): in progress**
+  - [x] Defined modular architecture specification (`specs/architecture-modular-monolith.md`, ADR-7 in `specs/design.md`)
+  - [ ] Implement `modules/auth` (Domain, Ports, Adapters, API, Pluggable SMS Gateway)
+  - [ ] Implement `modules/locations` (Domain, Ports, Adapters, API)
+  - [ ] Implement `modules/bookings` (Domain, Ports, Adapters, API)
+  - [ ] Implement `modules/payments` (Domain, Ports, Adapters, API)
+  - [ ] Implement `modules/device_gateway` (Domain, Ports, Adapters, API)
+  - [ ] Wire modular routers in `main.py` and verify all 135 tests pass
 - **Completed tasks:** T1 through T8, OTP development flow + rate limiting, and the core traveler PWA flow are implemented.
 - **Current project status (2026-11-07):** implemented an OTP-first entry screen, authenticated map-first flow, 50 m arrival detection/manual confirmation, stable public locker codes, exact-code transactional reservation, and a dedicated payment screen. Backend tests and frontend typecheck/production build pass. Browser verification of the full new journey and live route arrival remains pending.
 - **Database setup (2026-11-04):** an initial Alembic migration is checked in for new databases; existing manually created databases must be backed up and compared before applying it.

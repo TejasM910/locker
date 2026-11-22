@@ -112,6 +112,7 @@ The existing `locations.lat` and `locations.lng` fields are the map pin coordina
 - **ADR-4 Money in paise** (REQ-PAY-004). **UTC everywhere** (REQ-NFR-001).
 - **ADR-5 Public ids**: random 32-char hex `public_id` for URLs/QR (REQ-BOOK-005).
 - **ADR-6 State changes only via `state_machine.apply`**, never by assigning `booking.state` directly.
+- **ADR-7 Modular Monolith & Clean Architecture (Hexagonal)**: The backend is structured into bounded domain modules (`auth`, `locations`, `bookings`, `payments`, `device_gateway`) adhering to SOLID principles. Domain logic communicates via abstract Ports (DIP/ISP), with infrastructure adapters for databases and external gateways (SMS, Razorpay, MQTT). See `specs/architecture-modular-monolith.md`.
 
 ## Recent implementation updates (as of today)
 - **Booking expiry worker**: the app now runs a background loop that finds `CREATED` bookings with `expires_at <= now`, applies `expire`, and frees the locker while writing a `booking_expired` audit event.

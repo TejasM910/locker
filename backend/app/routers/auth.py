@@ -6,6 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import create_token, issue_otp, normalize_phone, rate_limited, resolve_token, verify_otp
 from ..db import get_session
 from ..models import User
+from ..modules.auth.ports.contracts import SmsGatewayPort
+from ..modules.auth.adapters.services import MockSmsGateway
+
+_default_sms_gateway: SmsGatewayPort = MockSmsGateway()
+
+
+def get_sms_gateway() -> SmsGatewayPort:
+    return _default_sms_gateway
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -20,11 +28,16 @@ class OtpVerify(BaseModel):
 
 
 @router.post("/otp/request")
-async def otp_request(body: OtpRequest, session: AsyncSession = Depends(get_session)):
+async def otp_request(
+    body: OtpRequest,
+    session: AsyncSession = Depends(get_session),
+    sms_gateway: SmsGatewayPort = Depends(get_sms_gateway),
+):
     phone = normalize_phone(body.phone)
     if rate_limited(phone):
         raise HTTPException(429, "OTP_RATE_LIMITED")
     code = issue_otp(phone)
+    await sms_gateway.send_otp(phone, code)
     # Dev-only flow: return the generated code so it can be used in tests and local demo.
     return {"status": "sent", "phone": phone, "debug_code": code}
 
