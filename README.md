@@ -21,15 +21,24 @@ An unpaid `CREATED` booking can expire and free its locker. `OVERSTAY`, refunds,
 
 ## Architecture
 
+The backend follows a **Modular Monolith with Clean Architecture (Hexagonal / Ports & Adapters)** adhering strictly to SOLID principles:
+
+- **Single Responsibility (SRP):** Business logic, HTTP routing, database queries, and external messaging are segregated into distinct layers.
+- **Open / Closed (OCP) & Liskov Substitution (LSP):** Infrastructure adapters (e.g., `MockSmsGateway` vs `TwilioSmsGateway`, `RazorpayGatewayAdapter`) implement abstract ports and can be swapped or extended without altering domain models.
+- **Interface Segregation (ISP) & Dependency Inversion (DIP):** FastAPI routes and domain services depend upon abstract protocols (`ports`), with concrete dependencies injected at runtime.
+- **Microservices-Ready:** Modules (`auth`, `locations`, `bookings`, `payments`, `device_gateway`) are bounded contexts that can be extracted into independent standalone microservices when horizontal distributed scaling is required.
+
+See [the Modular Monolith architecture specification](./specs/architecture-modular-monolith.md) for detailed contracts, boundaries, and class layouts.
+
 | Component | Role |
 |---|---|
 | `frontend/` | Next.js PWA with an OTP-first entry screen, authenticated MapLibre map, foreground geolocation, arrival confirmation, coded-locker selection, checkout, status, and unlock requests |
-| `backend/` | FastAPI API including nearby search, per-location coded locker inventory, exact-locker reservation, payment logic, expiry worker, and MQTT listener/publisher |
-| MySQL 8 | Users, locations, lockers, bookings, payments, and locker-event audit data |
+| `backend/` | FastAPI Modular Monolith structured into clean domain/ports/adapters/api boundaries (`auth`, `locations`, `bookings`, `payments`, `device_gateway`) |
+| MySQL 8 | Users, locations, lockers, bookings, payments, and locker-event audit data with ACID row-locking (`SKIP LOCKED`) |
 | Mosquitto | Local MQTT broker for locker commands and device events |
 | Razorpay | Checkout/order creation and signed payment webhooks |
 | ngrok | Optional HTTPS tunnel from Razorpay webhooks to the local API; MQTT is never exposed through this tunnel |
-| `specs/` | Requirements, design, OpenAPI contract, state machine, MQTT contract, and task status |
+| `specs/` | Requirements, design, OpenAPI contract, state machine, MQTT contract, and modular architecture specs |
 
 ## Requirements
 
