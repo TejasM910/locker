@@ -45,6 +45,11 @@
 - [x] Add 50 m arrival detection and manual arrival confirmation before exposing individual locker selection (REQ-PWA-003, REQ-LOC-011).
 - [x] Add stable location-derived unique locker codes, inventory retrieval, and exact-code transactional reservation (REQ-BOOK-006..007, REQ-PWA-004).
 - [x] Add the dedicated booking/payment step with explicit checkout and unlock only after verified payment (REQ-PWA-004); seamlessly transitions directly to the payment/active-locker view upon hold creation without returning to the map.
+- [x] Implement edge case defenses:
+  - [x] Single active hold per user (inventory hoarding prevention, REQ-BOOK-008)
+  - [x] Late payment graceful resurrection / auto-refund flag (REQ-BOOK-009)
+  - [x] Multi-unlock grace window for accidental door close in STORED state (REQ-LOCK-008)
+  - [x] Hardware tamper & door-jam fault ingestion marking locker offline (REQ-LOCK-007)
 - [ ] Browser-verify sign-in -> navigation/arrival -> locker-code selection -> payment -> paid-state unlock using simulated GPS and test payment.
 - [ ] Add MQTT heartbeat freshness/offline handling before presenting inventory as verified live availability; current map uses persisted locker status only.
 - [ ] Load-test map queries and availability polling for the proposed 100-1,000 concurrent-user range; current per-IP rate limiter is process-local.

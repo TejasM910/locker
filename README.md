@@ -30,6 +30,23 @@ The backend follows a **Modular Monolith with Clean Architecture (Hexagonal / Po
 
 See [the Modular Monolith architecture specification](./specs/architecture-modular-monolith.md) for detailed contracts, boundaries, and class layouts.
 
+### Resilient Edge Case Defenses
+
+The system implements targeted safeguards for real-world IoT, financial, and concurrency edge cases:
+
+1. **Inventory Hoarding & DOS Mitigation (`REQ-BOOK-008`)**:
+   - Each authenticated traveler is restricted to at most **one active unpaid hold** at any time. Further booking attempts return HTTP 409 `ACTIVE_HOLD_EXISTS` until the existing hold is completed or cancelled.
+2. **Late Payment Graceful Resurrection & Auto-Refund (`REQ-BOOK-009`)**:
+   - If a bank/gateway webhook arrives after the 15-minute hold timer expired:
+     - **Locker still free**: The booking is resurrected directly to `PAID` so the user does not lose their reservation.
+     - **Locker rebooked**: The transaction is marked `late_captured_refund_required` and an audit event triggers the automated gateway refund pipeline.
+3. **Hardware Tamper & Fault Isolation (`REQ-LOCK-007`)**:
+   - Inbound MQTT events reporting `tamper_detected` or `err:door_jammed` automatically transition the locker's status to `offline`, instantly removing it from discovery searches to prevent assigning damaged hardware.
+4. **Accidental Closure Grace Window (`REQ-LOCK-008`)**:
+   - A multi-unlock allowance during the initial 5-minute loading window prevents travelers from being locked out if the door bumps closed prematurely.
+
+See [EDGE_CASES_AND_SOLUTIONS.md](./EDGE_CASES_AND_SOLUTIONS.md) for the complete reference matrix of edge case scenarios and solutions.
+
 | Component | Role |
 |---|---|
 | `frontend/` | Next.js PWA with an OTP-first entry screen, authenticated MapLibre map, foreground geolocation, arrival confirmation, coded-locker selection, checkout, status, and unlock requests |

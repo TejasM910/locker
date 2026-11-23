@@ -178,6 +178,11 @@ export default function Home() {
       setNotice("");
       return;
     }
+    if (reason instanceof ApiError && reason.status === 409 && reason.message === "ACTIVE_HOLD_EXISTS") {
+      setError("You already have an active unpaid locker reservation. Complete payment or cancel it from 'Active locker' before creating a new one.");
+      setNotice("");
+      return;
+    }
     setError(reason instanceof Error ? reason.message : "Something went wrong. Please try again.");
     setNotice("");
   }

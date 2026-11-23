@@ -32,3 +32,14 @@ Rules:
 - At zero, show that the booked time has elapsed; do not imply that the booking has been released unless the backend reports a terminal state.
 - Terminal bookings (`RELEASED`, `EXPIRED`, `CANCELLED`) are not presented as active lockers.
 - API booking responses include `ends_at` so clients can render the paid booking countdown. Timestamps are UTC.
+
+## Edge case state behaviors
+
+- **Late Payment Capture on Expired Hold (`REQ-BOOK-009`)**:
+  - When a `payment.captured` webhook arrives after the 15-minute hold timer expired, the system checks whether the locker is still free and unreserved.
+  - If still free, the booking is safely resurrected directly from `EXPIRED -> PAID`, and the locker is marked held.
+  - If the locker was already rebooked by another traveler, the booking remains terminal (`EXPIRED`), the payment record is tagged `late_captured_refund_required`, and a `late_payment_refund_required` audit event is dispatched for the automated refund pipeline.
+- **Hardware Fault / Tamper (`REQ-LOCK-007`)**:
+  - Inbound device events `tamper_detected` or `err:door_jammed` transition the physical locker's status to `offline` to prevent assigning damaged hardware.
+- **Single Active Hold per Traveler (`REQ-BOOK-008`)**:
+  - A traveler is restricted to at most one unpaid `CREATED` hold at a time to mitigate inventory hoarding.

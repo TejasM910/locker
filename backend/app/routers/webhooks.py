@@ -63,14 +63,15 @@ async def razorpay_webhook(request: Request, x_razorpay_signature: str = Header(
                 status = "amount_mismatch"
                 log.error("Captured payment amount/currency mismatch for booking %s", booking.public_id)
             elif booking.state == State.CREATED and booking.expires_at <= now:
-                booking.state = apply(booking.state, "expire")
-                status = "late_captured"
+                # Edge Case REQ-BOOK-009: Late payment webhook arrival
                 locker = (
                     await session.execute(
                         select(Locker).where(Locker.id == booking.locker_id).with_for_update()
                     )
                 ).scalar_one_or_none()
-                if locker is not None and locker.status == "held":
+                # Check if locker is still available / not taken by anyone else
+                other_active = None
+                if locker is not None:
                     other_active = (
                         await session.execute(
                             select(Booking.id)
@@ -84,17 +85,38 @@ async def razorpay_webhook(request: Request, x_razorpay_signature: str = Header(
                             .limit(1)
                         )
                     ).first()
-                    if other_active is None:
-                        locker.status = "free"
-                session.add(
-                    LockerEvent(
-                        locker_id=booking.locker_id,
-                        booking_id=booking.id,
-                        type="late_payment_reconciliation_required",
-                        payload={"public_id": booking.public_id, "payment_id": payment_id},
+
+                if locker is not None and other_active is None and locker.status in {"held", "free"}:
+                    # Resurrect the booking!
+                    booking.state = State.PAID
+                    booking.paid_at = now
+                    booking.ends_at = now + timedelta(hours=booking.duration_hours)
+                    locker.status = "held"
+                    status = "late_captured_resurrected"
+                    session.add(
+                        LockerEvent(
+                            locker_id=booking.locker_id,
+                            booking_id=booking.id,
+                            type="late_payment_hold_resurrected",
+                            payload={"public_id": booking.public_id, "payment_id": payment_id},
+                        )
                     )
-                )
-                log.error("Captured payment arrived after booking hold expired: %s", booking.public_id)
+                    log.info("Late payment for expired hold resurrected to PAID for booking %s", booking.public_id)
+                else:
+                    # Locker was already taken or unavailable; trigger refund/reconciliation
+                    booking.state = apply(booking.state, "expire")
+                    status = "late_captured_refund_required"
+                    if locker is not None and locker.status == "held" and other_active is None:
+                        locker.status = "free"
+                    session.add(
+                        LockerEvent(
+                            locker_id=booking.locker_id,
+                            booking_id=booking.id,
+                            type="late_payment_refund_required",
+                            payload={"public_id": booking.public_id, "payment_id": payment_id},
+                        )
+                    )
+                    log.error("Late payment arrived after hold expired and locker was rebooked: %s. Refund required.", booking.public_id)
             elif booking.state == State.CREATED:
                 booking.state = apply(booking.state, "payment_captured")  # REQ-PAY-001
                 booking.paid_at = now
@@ -133,6 +155,6 @@ async def razorpay_webhook(request: Request, x_razorpay_signature: str = Header(
             )
     except IntegrityError:
         return {"ok": True, "duplicate": True}
-    if status in {"late_captured", "amount_mismatch", "captured_unapplied"}:
+    if status in {"late_captured_refund_required", "late_captured", "amount_mismatch", "captured_unapplied"}:
         return {"ok": True, "reconciliation_required": True}
     return {"ok": True}

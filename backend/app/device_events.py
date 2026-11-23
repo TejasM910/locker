@@ -21,6 +21,12 @@ async def handle_device_event(session: AsyncSession, device_id: str, payload: di
             .with_for_update())).scalars().first()
         session.add(LockerEvent(locker_id=locker.id, booking_id=booking.id if booking else None,
                                 type=str(evt), payload=payload))
+
+        # Edge Case REQ-LOCK-007: Tamper or Hardware Jam fault detection
+        if evt in {"tamper_detected", "err:door_jammed"}:
+            locker.status = "offline"
+            return
+
         if booking and evt in EVT_TO_EVENT:
             try:
                 booking.state = apply(booking.state, EVT_TO_EVENT[evt])

@@ -59,6 +59,21 @@ async def create_booking(body: BookingCreate, user_id: int = Depends(current_use
         async with session.begin():
             if await session.get(User, user_id) is None:
                 raise HTTPException(404, "USER_NOT_FOUND")
+
+            # Edge Case: Prevent Inventory Hoarding (REQ-BOOK-008)
+            # A user may have at most one active unpaid (CREATED) hold at a time.
+            holds_res = await session.execute(
+                select(func.count(Booking.id))
+                .where(
+                    Booking.user_id == user_id,
+                    Booking.state == State.CREATED,
+                    Booking.expires_at > func.utc_timestamp(3),
+                )
+            )
+            active_holds_count = holds_res.scalar() if hasattr(holds_res, "scalar") else None
+            if active_holds_count is not None and active_holds_count > 0:
+                raise HTTPException(409, "ACTIVE_HOLD_EXISTS")
+
             if idempotency_key:
                 prior = (
                     await session.execute(

@@ -10,6 +10,10 @@ Status: `M1` = in the first milestone, `M2` = in the second milestone, `later` =
 - **REQ-BOOK-005** (M1): The system shall expose bookings only by an unguessable `public_id`, never by sequential id.
 - **REQ-BOOK-006** (M2): Each physical locker shall have a stable, human-readable `locker_code` unique across the system (for example, `CH101` for a Church Street locker). Codes shall be persisted independently of database row order after creation; location-name-derived prefixes shall be disambiguated deterministically when needed.
 - **REQ-BOOK-007** (M2): When a traveler selects an available locker by `locker_code`, the booking API shall reserve that exact locker transactionally and reject stale/unavailable selections without assigning a different locker.
+- **REQ-BOOK-008** (M2 Edge Cases): An authenticated traveler shall have at most one active unpaid (`CREATED`) hold at any time. Further hold requests shall be rejected with HTTP 409 `ACTIVE_HOLD_EXISTS`.
+- **REQ-BOOK-009** (M2 Edge Cases): In late payment capture where the hold expired but the physical locker is still available, the system shall resurrect the booking to `PAID`. If the locker was already rebooked, it shall log a refund audit and mark the payment for automated reconciliation.
+- **REQ-LOCK-007** (M2 Edge Cases): If a hardware device event reports `tamper_detected` or `err:door_jammed`, the system shall record an audit alert and mark the locker `offline` to prevent assigning damaged hardware.
+- **REQ-LOCK-008** (M2 Edge Cases): While a booking is in `STORED` state, the user may re-unlock within a 5-minute loading grace period to recover items if the door was accidentally pushed closed early.
 
 ## Payment
 - **REQ-PAY-001** (M1): When Razorpay sends a verified `payment.captured` webhook, the system shall move the booking `CREATED -> PAID`.

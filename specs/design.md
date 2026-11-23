@@ -113,6 +113,12 @@ The existing `locations.lat` and `locations.lng` fields are the map pin coordina
 - **ADR-5 Public ids**: random 32-char hex `public_id` for URLs/QR (REQ-BOOK-005).
 - **ADR-6 State changes only via `state_machine.apply`**, never by assigning `booking.state` directly.
 - **ADR-7 Modular Monolith & Clean Architecture (Hexagonal)**: The backend is structured into bounded domain modules (`auth`, `locations`, `bookings`, `payments`, `device_gateway`) adhering to SOLID principles. Domain logic communicates via abstract Ports (DIP/ISP), with infrastructure adapters for databases and external gateways (SMS, Razorpay, MQTT). See `specs/architecture-modular-monolith.md`.
+- **ADR-8 Resilient Edge Case Defenses**:
+  - **Inventory Hoarding (REQ-BOOK-008)**: Max 1 active unpaid hold per user; prevents denial-of-inventory attacks.
+  - **Late Payment Capture (REQ-BOOK-009)**: Webhook handler attempts graceful resurrection to `PAID` if the locker is still free; otherwise marks `late_captured_refund_required` for automated gateway refund.
+  - **Hardware Fault Isolation (REQ-LOCK-007)**: `tamper_detected` and `err:door_jammed` MQTT events mark the locker `offline` and prevent discovery assignment.
+  - **Accidental Closure Grace Window (REQ-LOCK-008)**: 5-minute loading window allows re-unlocking if the door is pushed closed prematurely before loading is complete.
+  - See `EDGE_CASES_AND_SOLUTIONS.md` for complete matrix.
 
 ## Recent implementation updates (as of today)
 - **Booking expiry worker**: the app now runs a background loop that finds `CREATED` bookings with `expires_at <= now`, applies `expire`, and frees the locker while writing a `booking_expired` audit event.
